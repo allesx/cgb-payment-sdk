@@ -14,11 +14,41 @@ use Psr\Log\LoggerInterface;
 use Exception;
 use GuzzleHttp\Client as GuzzleClient;
 
+/**
+ * CGB 支付客户端
+ * 广发银行银企直联支付 SDK 的核心客户端类
+ * 提供完整的请求签名、加密、发送、解密、验签功能
+ * 
+ * 对应 Java SDK 的 RequestSender 和 SecurityManager 的组合功能
+ */
 class CgbClient
 {
     private array $config;
+    
+    /** @var LoggerInterface|null 日志记录器 */
     private ?LoggerInterface $logger;
 
+    /**
+     * 构造函数
+     * 
+     * @param array $config 配置数组，包含以下必需项：
+     *   - app_id: 平台分配的 appId
+     *   - ent_cst_no: 企业客户号
+     *   - ent_user_id: 企业操作员
+     *   - ent_password: 操作员密码
+     *   - gateway_url: 银行网关地址
+     *   - private_key: 商户私钥文件路径或PEM字符串
+     *   - private_key_pass: 私钥密码
+     *   - public_key: 银行公钥证书文件路径或PEM字符串
+     *   - version: 协议版本（可选，默认2.0.0）
+     *   - sign_algo: 签名算法（可选，默认SHA1）
+     *   - timeout: 请求超时秒数（可选，默认30）
+     *   - bank_psw_enc_pub: 操作员密码加密公钥（可选，SM2公钥HEX）
+     *   - mac_address: 固定MAC地址（可选）
+     *   - http_client: 自定义Guzzle客户端（可选，用于测试）
+     * @param LoggerInterface|null $logger 日志记录器（可选）
+     * @throws PayException 配置验证失败时抛出
+     */
     public function __construct(array $config, ?LoggerInterface $logger = null)
     {
         $this->config = $config;
@@ -26,6 +56,13 @@ class CgbClient
         $this->validateConfig();
     }
     
+    /**
+     * 验证配置参数
+     * 检查必需配置项是否存在，设置默认值
+     * 
+     * @return void
+     * @throws PayException 缺少必需配置项时抛出
+     */
     public function validateConfig(): void
     {
         $required = [
@@ -45,11 +82,41 @@ class CgbClient
         }
     }
 
+    /**
+     * 发送请求（便捷方法）
+     * 
+     * @param string $tradeCode 交易码（如 '0001', '0021'）
+     * @param array $body 请求体数据
+     * @return array 响应结果，包含：
+     *   - status: 请求状态
+     *   - headers: 响应头
+     *   - raw: 原始响应体
+     *   - decrypted: 解密后的明文
+     *   - parsed: 解析后的JSON数组
+     *   - decrypt_error: 解密错误信息（如有）
+     * @throws PayException 请求失败时抛出
+     */
     public function request(string $tradeCode, array $body): array
     {
         return $this->sendCompleteRequest($body, $tradeCode);
     }
 
+    /**
+     * 发送完整请求
+     * 执行完整的请求流程：构建请求、签名、加密、发送、解密、验签
+     * 对应 Java SDK 的 RequestSender.send
+     * 
+     * @param array $requestBody 请求体数据（Body部分）
+     * @param string $tradeCode 交易码（如 '0001', '0021'）
+     * @return array 响应结果，包含：
+     *   - status: 请求状态（'success' 或 'failed'）
+     *   - headers: 响应头数组
+     *   - raw: 原始响应体（加密的）
+     *   - decrypted: 解密后的明文
+     *   - parsed: 解析后的JSON数组，失败时为null
+     *   - decrypt_error: 解密错误信息，成功时为null
+     * @throws PayException 请求失败时抛出
+     */
     public function sendCompleteRequest(array $requestBody, string $tradeCode): array
     {
         try {
@@ -106,6 +173,7 @@ class CgbClient
             $this->debug('CGB:STEP7:responseRaw', ['headers' => $respHeaders, 'body' => $respBodyRaw]);
 
             $decrypt = $this->processResponseDecryption($respEncryptKey, $respSignature, $respBodyRaw);
+            $this->debug('CGB:STEP8:decrypt', ['decrypt' => $decrypt]);
 
             return [
                 'status' => $res['status'] ?? 'failed',
@@ -120,11 +188,24 @@ class CgbClient
         }
     }
 
-    private function processResponseDecryption(string $respEncryptKey, string $respSignature, string $respBodyRaw): array
+    /**
+     * 处理响应解密和解析（可用于回调处理）
+     * 
+     * @param string $respEncryptKey 响应头中的encryptKey（Base64编码的加密对称密钥）
+     * @param string $respSignature 响应头中的signature（签名）
+     * @param string $respBodyRaw 响应体原始数据（加密的）
+     * @return array 返回包含以下键的数组：
+     *   - 'decrypted': string 解密后的明文
+     *   - 'parsed': array|null 解析后的JSON数组，失败时为null
+     *   - 'decrypt_error': string|null 错误信息，成功时为null
+     *   - 'verify_result': bool 验签结果
+     */
+    public function processResponseDecryption(string $respEncryptKey, string $respSignature, string $respBodyRaw): array
     {
         $decrypted = '';
         $parsed = null;
         $decryptError = null;
+        $verifyResult = false;
 
         try {
             $respKeyBytes = $this->decryptSecretKey($respEncryptKey);
@@ -132,9 +213,16 @@ class CgbClient
             if (empty($decrypted)) {
                 $decryptError = '解密后的内容为空';
             } else {
-                if (!empty($respSignature) && !$this->verifySignature($decrypted, $respSignature)) {
-                    $decryptError = '响应验签失败';
+                // 验签
+                if (!empty($respSignature)) {
+                    $verifyResult = $this->verifySignature($decrypted, $respSignature);
+                    if (!$verifyResult) {
+                        $decryptError = '响应验签失败';
+                    }
+                } else {
+                    $decryptError = '响应头中缺少signature，跳过验签';
                 }
+                // JSON解析
                 $try = json_decode($decrypted, true);
                 if (json_last_error() === JSON_ERROR_NONE) {
                     $parsed = $try;
@@ -150,9 +238,24 @@ class CgbClient
             'decrypted' => $decrypted,
             'parsed' => $parsed,
             'decryptError' => $decryptError,
+            'verify_result' => $verifyResult,
         ];
     }
 
+    /**
+     * 发送HTTP请求
+     * 使用 Guzzle HTTP 客户端发送POST请求
+     * 
+     * @param string $url 请求URL
+     * @param array $headers HTTP头数组（格式：['key: value', ...]）
+     * @param string $body 请求体（加密的HEX字符串）
+     * @return array 响应结果，包含：
+     *   - status: 状态（'success'）
+     *   - body: 响应体
+     *   - headers: 响应头数组
+     *   - http_code: HTTP状态码
+     * @throws PayException HTTP请求失败时抛出
+     */
     private function sendRequest(string $url, array $headers, string $body): array
     {
         $headerAssoc = [];
@@ -196,6 +299,21 @@ class CgbClient
         ];
     }
 
+    /**
+     * 生成签名
+     * 使用RSA私钥对内容进行签名
+     * 对应 Java SDK 的 SecurityManager.generateSignature
+     * 
+     * 签名流程：
+     * 1. 对内容进行哈希（SHA1或SHA256）
+     * 2. 将二进制哈希转换为小写十六进制字符串
+     * 3. 对处理后的字符串进行RSA签名
+     * 4. Base64编码签名结果
+     * 
+     * @param string $content 待签名内容
+     * @return string Base64编码的签名
+     * @throws PayException 签名失败时抛出
+     */
     public function generateSignature(string $content): string
     {
         try {
@@ -219,6 +337,23 @@ class CgbClient
         }
     }
 
+    /**
+     * 验证签名
+     * 使用银行公钥验证签名
+     * 对应 Java SDK 的 SecurityManager.verifySignature
+     * 
+     * 验签流程与签名流程一致：
+     * 1. 对内容进行哈希（SHA1或SHA256）
+     * 2. 将二进制哈希转换为小写十六进制字符串
+     * 3. 对处理后的字符串进行RSA验签
+     * 
+     * 如果配置的算法不是SHA1且验签失败，会自动回退尝试SHA1（兼容银行历史实现）
+     * 
+     * @param string $content 原始内容
+     * @param string $signatureB64 Base64编码的签名
+     * @return bool 验签结果，true表示验证通过
+     * @throws PayException 验签过程出错时抛出
+     */
     public function verifySignature(string $content, string $signatureB64): bool
     {
         try {
@@ -249,15 +384,32 @@ class CgbClient
         }
     }
 
+    /**
+     * 生成对称密钥
+     * 生成16字节（128位）的随机对称密钥，用于SM4加密
+     * 对应 Java SDK 的 SecurityManager.generateSecretKey
+     * 
+     * @return string 16字节的二进制密钥
+     * @throws PayException 生成失败时抛出
+     */
     public function generateSecretKey(): string
     {
         try {
-            return random_bytes(16);
+            return \random_bytes(16);
         } catch (Exception $e) {
             throw new PayException('生成密钥失败:' . $e->getMessage());
         }
     }
 
+    /**
+     * 加密对称密钥
+     * 使用银行公钥对对称密钥进行RSA加密
+     * 对应 Java SDK 的 SecurityManager.encryptSecretKey
+     * 
+     * @param string $secretKey 16字节的对称密钥
+     * @return string Base64编码的加密密钥
+     * @throws PayException 加密失败时抛出
+     */
     public function encryptSecretKey(string $secretKey): string
     {
         try {
@@ -276,6 +428,15 @@ class CgbClient
         }
     }
 
+    /**
+     * 解密对称密钥
+     * 使用商户私钥解密银行返回的加密对称密钥
+     * 对应 Java SDK 的 SecurityManager.decryptSecretKey
+     * 
+     * @param string $encryptKeyB64 Base64编码的加密密钥
+     * @return string 16字节的对称密钥
+     * @throws PayException 解密失败时抛出
+     */
     public function decryptSecretKey(string $encryptKeyB64): string
     {
         $encrypted = base64_decode($encryptKeyB64, true);
@@ -302,6 +463,21 @@ class CgbClient
         return $out;
     }
 
+    /**
+     * 使用对称密钥加密内容
+     * 使用SM4-ECB模式加密内容
+     * 对应 Java SDK 的 SecurityManager.encryptContentWithSecretKey
+     * 
+     * 加密流程：
+     * 1. PKCS7填充内容到16字节的倍数
+     * 2. 使用SM4-ECB模式加密
+     * 3. 转换为大写十六进制字符串返回
+     * 
+     * @param string $content 待加密内容
+     * @param string $secretKey 16字节的对称密钥
+     * @return string 加密后的HEX字符串（大写）
+     * @throws Exception 加密失败时抛出
+     */
     public function encryptContentWithSecretKey(string $content, string $secretKey): string
     {
         if (strlen($secretKey) !== 16) {
@@ -317,6 +493,20 @@ class CgbClient
         return strtoupper(bin2hex($ciphertext));
     }
 
+    /**
+     * 智能解密内容
+     * 自动识别加密格式（HEX或Base64），尝试多种解密方式
+     * 对应 Java SDK 的 SecurityManager.decryptContentWithSecretKeyDirect
+     * 
+     * 解密策略：
+     * 1. 优先尝试SM4-ECB解密
+     * 2. 如果失败，尝试SM4-CBC（IV在最后或前面）
+     * 3. 清理解密结果（去除BOM和控制字符）
+     * 
+     * @param string $encryptedContent 加密内容（HEX或Base64格式）
+     * @param string $secretKey 16字节的对称密钥
+     * @return string 解密后的明文，失败时返回空字符串
+     */
     public function decryptContentSmart(string $encryptedContent, string $secretKey): string
     {
         $data = null;
@@ -353,6 +543,13 @@ class CgbClient
         return '';
     }
 
+    /**
+     * 加载银行公钥
+     * 支持 .cer 证书文件和 PEM 格式
+     * 
+     * @return \OpenSSLAsymmetricKey|resource OpenSSL公钥资源（PHP 8+ 返回 OpenSSLAsymmetricKey，PHP 7 返回 resource）
+     * @throws PayException 加载失败时抛出
+     */
     private function loadBankPublicKey()
     {
         $publicKey = $this->config['public_key'] ?? '';
@@ -401,6 +598,13 @@ class CgbClient
         throw new PayException("无法加载银行公钥: {$errorMsg} ({$publicKey})");
     }
 
+    /**
+     * 加载商户私钥
+     * 支持 PFX/PKCS12 证书文件和 PEM 格式
+     * 
+     * @return \OpenSSLAsymmetricKey|\OpenSSLCertificate|resource OpenSSL私钥资源（PHP 8+ 返回 OpenSSLAsymmetricKey，PHP 7 返回 resource）
+     * @throws PayException 加载失败时抛出
+     */
     private function loadPrivateKey()
     {
         $privateKey = $this->config['private_key'] ?? '';
@@ -437,6 +641,13 @@ class CgbClient
         throw new PayException("无法加载私钥: {$errorMsg} ({$privateKey})");
     }
 
+    /**
+     * 清理明文
+     * 去除BOM和控制字符，便于JSON解析
+     * 
+     * @param string $str 原始字符串
+     * @return string 清理后的字符串
+     */
     private function cleanupPlaintext(string $str): string
     {
         $str = preg_replace('/^\xEF\xBB\xBF/', '', $str);
@@ -444,6 +655,14 @@ class CgbClient
         return trim((string)$str);
     }
 
+    /**
+     * 生成操作员密码信封（如果可能）
+     * 如果配置了 bank_psw_enc_pub，则使用SM2加密密码
+     * 否则返回明文密码
+     * 
+     * @param string $plainPassword 明文密码
+     * @return string 密码信封（格式：==================== + 大写HEX密文）或明文密码
+     */
     private function generatePasswordEnvelopeIfPossible(string $plainPassword): string
     {
         try {
@@ -457,6 +676,21 @@ class CgbClient
         }
     }
 
+    /**
+     * SM2加密操作员密码
+     * 对应 Java SDK 的 SMUtil.sm2EncryptOperatorPwd
+     * 
+     * 加密流程：
+     * 1. 处理长度前缀（len < 10 补0，len >= 100 返回 "888"）
+     * 2. 使用SM2公钥加密
+     * 3. 转换为DER格式
+     * 4. 添加20个'='前缀
+     * 
+     * @param string $pubHex 公钥16进制字符串（130字符，64字节公钥）
+     * @param string $operatorPwd 明文操作密码
+     * @return string 加密后的字符串，格式：==================== + 大写HEX密文（DER格式）
+     * @throws Exception 加密失败时抛出
+     */
     private function sm2EncryptOperatorPwd(string $pubHex, string $operatorPwd): string
     {
         $len = strlen($operatorPwd);
@@ -495,6 +729,16 @@ class CgbClient
         return '====================' . strtoupper($cipherHex);
     }
 
+    /**
+     * 将SM2加密的C1C3C2格式转换为DER格式
+     * 对应 Java SDK 的 SM2Utils.encodeSM2CipherToDER
+     * 
+     * DER格式：SEQUENCE { INTEGER(c1x), INTEGER(c1y), OCTET STRING(c3), OCTET STRING(c2) }
+     * 
+     * @param string $c1c3c2Hex C1C3C2格式的HEX字符串
+     * @return string DER格式的HEX字符串
+     * @throws Exception 编码失败时抛出
+     */
     private function encodeSM2CipherToDER(string $c1c3c2Hex): string
     {
         $curveLength = 32;
@@ -513,10 +757,18 @@ class CgbClient
         return strtoupper(bin2hex($sequence->getBinary()));
     }
 
+    /**
+     * 十六进制转十进制
+     * 支持GMP和BCMath扩展
+     * 
+     * @param string $hex 十六进制字符串
+     * @return string 十进制字符串
+     * @throws Exception GMP和BCMath都不可用时抛出
+     */
     private function hexToDecimal(string $hex): string
     {
         if (extension_loaded('gmp')) {
-            return gmp_strval(gmp_init($hex, 16), 10);
+            return \gmp_strval(\gmp_init($hex, 16), 10);
         }
         if (extension_loaded('bcmath')) {
             $decimal = '0';
@@ -531,6 +783,23 @@ class CgbClient
         throw new Exception('需要 gmp 或 bcmath 扩展来处理大整数');
     }
 
+    /**
+     * 获取配置数组
+     * 
+     * @return array 配置数组（只读副本）
+     */
+    public function getConfig(): array
+    {
+        return $this->config;
+    }
+
+    /**
+     * 记录调试日志
+     * 
+     * @param string $message 日志消息
+     * @param array $context 上下文数据
+     * @return void
+     */
     private function debug(string $message, array $context = []): void
     {
         if ($this->logger instanceof LoggerInterface) {
