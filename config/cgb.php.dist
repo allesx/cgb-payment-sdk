@@ -1,0 +1,32 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    // 基础配置（必填且非空）
+    'app_id' => 'your_app_id',
+    'ent_cst_no' => 'your_ent_cst_no',
+    'ent_user_id' => 'your_ent_user_id',
+    'ent_password' => 'your_operator_password',
+    'gateway_url' => 'https://ebank-yd03.test.cgbchina.com.cn:49081/deib/E1DEIB/E101/',
+    'version' => '2.0.0',
+
+    // 证书（必填：路径或 PEM 字符串）
+    'private_key' => '/absolute/path/to/merchant.pfx', // 或者直接放入 PEM 字符串
+    'private_key_pass' => '', // 注意：键必须存在，可为空字符串（PEM 或无口令PFX）
+    'public_key' => '/absolute/path/to/bank.cer', // 或者 PEM 字符串
+
+    // 可选：操作员密码 SM2 加密公钥（HEX），用于生成“密码信封”
+    'bank_psw_enc_pub' => '',
+
+    // 可选：SHA1（默认）或 SHA256
+    'sign_algo' => 'SHA1',
+
+    // 可选：覆盖上送的 MAC 地址
+    'mac_address' => '',
+
+    // HTTP 超时（秒）
+    'timeout' => 30,
+];
+
+

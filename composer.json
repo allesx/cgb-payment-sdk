@@ -1,0 +1,50 @@
+{
+    "name": "allesx/cgb-payment-sdk",
+    "description": "广发银行(CGB)支付SDK - 支持RSA/SM2/SM4加密的支付网关",
+    "type": "library",
+    "keywords": [
+        "cgb",
+        "payment",
+        "bank",
+        "gateway",
+        "sdk",
+        "chinese-bank"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Your Name",
+            "email": "your.email@example.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-openssl": "*",
+        "ext-bcmath": "*",
+        "ext-gmp": "*",
+        "guzzlehttp/guzzle": "^7.0",
+        "psr/log": "^1.1 || ^2.0 || ^3.0",
+        "lpilp/guomi": "^2.0",
+        "genkgo/php-asn1": "^2.5"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5 || ^10.0",
+        "phpstan/phpstan": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Allesx\\\\CgbPayment\\\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CgbPayment\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}
