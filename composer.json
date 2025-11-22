@@ -33,7 +33,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Allesx\\\\CgbPayment\\\\": "src/"
+            "Allesx\\CgbPayment\\": "src/"
         }
     },
     "autoload-dev": {
