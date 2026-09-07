@@ -1,6 +1,6 @@
 {
     "name": "allesx/cgb-payment-sdk",
-    "description": "广发银行(CGB)支付SDK - 支持RSA/SM2/SM4加密的支付网关",
+    "description": "银行(CGB)支付SDK - 支持RSA/SM2/SM4加密的支付网关",
     "type": "library",
     "keywords": [
         "cgb",

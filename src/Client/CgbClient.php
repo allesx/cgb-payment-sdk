@@ -16,7 +16,7 @@ use GuzzleHttp\Client as GuzzleClient;
 
 /**
  * CGB 支付客户端
- * 广发银行银企直联支付 SDK 的核心客户端类
+ * 银企直联支付 SDK 的核心客户端类
  * 提供完整的请求签名、加密、发送、解密、验签功能
  * 
  * 对应 Java SDK 的 RequestSender 和 SecurityManager 的组合功能

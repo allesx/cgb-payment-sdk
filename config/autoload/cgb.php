@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * 广发银行 CGB 支付 SDK 配置文件
+ * 银行 CGB 支付 SDK 配置文件
  * 适用于 Hyperf 框架
  * 
  * 此配置文件会自动从环境变量读取配置值
